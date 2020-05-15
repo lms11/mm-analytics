@@ -3,7 +3,6 @@ const webSocketServer = require('websocket').server;
 const http = require('http');
 const redis = require('redis');
 
-const UNDER_35_KEY = 'MARKET_UNDER_35';
 const SESSION_KEY = 'session';
 
 const server = http.createServer();
@@ -14,8 +13,6 @@ const wsServer = new webSocketServer({
 
 const connections = {};
 const cacheClient = redis.createClient();
-let sessionImage = null;
-let under35Image = null;
 
 // Generates unique ID for every new connection
 const getUniqueID = () => {
@@ -37,26 +34,19 @@ wsServer.on('request', function (request) {
   const conn = request.accept(null, request.origin);
   connections[userID] = conn;
 
-  conn.sendUTF(JSON.stringify({under35: under35Image, session: sessionImage}));
-
   // user disconnected
   conn.on('close', function (connection) {
     delete connections[userID];
   });
 });
 
-function updateUnder35Image(newData) {
-  if (under35Image == null) {
-    under35Image = newData;
-    return;
-  }
-
+function applyUpdates(currentData, newData) {
   const newLastData = [];
   const newMarketChanges = [];
 
-  if (under35Image.lastData.length > 0) {
+  if (currentData.lastData.length > 0) {
     const lastDataEntryTimestamp =
-      under35Image.lastData[under35Image.lastData.length - 1].t;
+      currentData.lastData[currentData.lastData.length - 1].t;
 
     newData.lastData.forEach((data) => {
       if (data.t <= lastDataEntryTimestamp) {
@@ -66,9 +56,10 @@ function updateUnder35Image(newData) {
     });
   }
 
-  if (under35Image.marketChanges.length > 0) {
+  if (currentData.marketChanges.length > 0) {
     const lastMarketChangeEntryTimestamp =
-      under35Image.marketChanges[under35Image.marketChanges.length - 1].t;
+      currentData.marketChanges[currentData.marketChanges.length - 1].t;
+
     newData.marketChanges.forEach((data) => {
       if (data.t <= lastMarketChangeEntryTimestamp) {
         return;
@@ -77,40 +68,75 @@ function updateUnder35Image(newData) {
     });
   }
 
-  under35Image = {
-    ...under35Image,
-    lastData: [...under35Image.lastData, ...newLastData],
-    marketChanges: [...under35Image.marketChanges, ...newMarketChanges],
+  return {
+    ...currentData,
+    lastData: [...currentData.lastData, ...newLastData],
+    marketChanges: [...currentData.marketChanges, ...newMarketChanges],
   };
 }
 
-function loop() {
-  cacheClient.hget(UNDER_35_KEY, UNDER_35_KEY, function (err, under35) {
+function updateSession(cacheClient) {
+  cacheClient.get('session', function (err, session) {
     if (err) {
-      console.log('Error while getting under 35', err);
+      console.log('Error while getting session', err);
       return;
     }
 
-    const parsedUnder35 = JSON.parse(under35);
-    updateUnder35Image(parsedUnder35);
+    sendMessage(
+      JSON.stringify({
+        session: JSON.parse(session),
+      }),
+    );
+  });
 
-    cacheClient.get(SESSION_KEY, function (err2, session) {
-      if (err2) {
-        console.log('Error while getting session', err2);
-        return;
-      }
+  setTimeout(() => updateSession(cacheClient), 5 * 60 * 1000);
+}
 
-      sessionImage = JSON.parse(session);
+function main() {
+  const marketsToSubscribe = process.argv[2].split(',');
+  const subscriber = redis.createClient();
+  updateSession(subscriber.duplicate());
+
+  let currentState = {};
+
+  subscriber.on('message', function (channel, message) {
+    if (message == null || message.trim() === '') {
+      return;
+    }
+
+    if (channel === 'orders') {
+      const orders = JSON.parse(message);
       sendMessage(
         JSON.stringify({
-          lastData: under35Image != null ? under35Image.lastData : [],
-          marketChanges: under35Image != null ? under35Image.marketChanges : [],
-          session: sessionImage,
+          orders,
         }),
       );
-      setTimeout(loop, 1000);
-    });
+    } else {
+      const marketStateReceived = JSON.parse(message);
+      let newMarketState;
+      if (channel in currentState) {
+        newMarketState = applyUpdates(
+          currentState[channel],
+          marketStateReceived,
+        );
+      } else {
+        newMarketState = marketStateReceived;
+      }
+
+      currentState[channel] = newMarketState;
+
+      sendMessage(
+        JSON.stringify({
+          marketChange: newMarketState,
+        }),
+      );
+    }
+  });
+
+  [...marketsToSubscribe, 'orders'].forEach((channel) => {
+    const output = subscriber.subscribe(channel);
+    console.log('Channel subscribed:', channel, output);
   });
 }
 
-loop();
+main();

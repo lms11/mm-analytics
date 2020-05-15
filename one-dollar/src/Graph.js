@@ -1,30 +1,11 @@
 import React from 'react';
-import {makeStyles} from '@material-ui/core/styles';
-import Card from '@material-ui/core/Card';
-import CardContent from '@material-ui/core/CardContent';
-import Grid from '@material-ui/core/Grid';
 import Highcharts from 'highcharts/highstock';
 import HighchartsReact from 'highcharts-react-official';
 
-const useStyles = makeStyles({
-  root: {
-    minWidth: 275,
-  },
-  bullet: {
-    display: 'inline-block',
-    margin: '0 2px',
-    transform: 'scale(0.8)',
-  },
-  title: {
-    fontSize: 14,
-  },
-  pos: {
-    marginBottom: 12,
-  },
-});
-
-export default function SimpleCard({lastData, marketChanges}) {
-  const classes = useStyles();
+export default function Graph({lastData, marketChanges, title}) {
+  if (lastData == null || marketChanges == null) {
+    return null;
+  }
 
   const openFlags = {
     type: 'flags',
@@ -51,30 +32,24 @@ export default function SimpleCard({lastData, marketChanges}) {
   };
 
   return (
-    <Grid item xs={12}>
-      <Card className={classes.root}>
-        <CardContent>
-          <div>
-            <HighchartsReact
-              highcharts={Highcharts}
-              constructorType={'stockChart'}
-              options={{
-                title: {
-                  text: 'Under 3.5 (back)',
-                },
-                series: [
-                  {
-                    data: lastData.map((x) => [x.t, x.p]),
-                    id: 'dataseries',
-                  },
-                  openFlags,
-                  suspendedFlags,
-                ],
-              }}
-            />
-          </div>
-        </CardContent>
-      </Card>
-    </Grid>
+    <div>
+      <HighchartsReact
+        highcharts={Highcharts}
+        constructorType={'stockChart'}
+        options={{
+          title: {
+            text: title,
+          },
+          series: [
+            {
+              data: lastData.map((x) => [x.t, x.p]),
+              id: 'dataseries',
+            },
+            openFlags,
+            suspendedFlags,
+          ],
+        }}
+      />
+    </div>
   );
 }
